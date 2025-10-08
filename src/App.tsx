@@ -18,6 +18,8 @@ const LearningApp = () => {
   const [progress, setProgress] = useState({ totalQuizzes: 0, avgScore: 0, strengths: [], weaknesses: [] });
   const [apiKey, setApiKey] = useState('');
   const [showApiInput, setShowApiInput] = useState(true);
+  const [youtubeVideos, setYoutubeVideos] = useState([]);
+  const [loadingVideos, setLoadingVideos] = useState(false);
   const fileInputRef = useRef(null);
   const pdfContainerRef = useRef(null);
 
@@ -284,6 +286,173 @@ Content: ${pdfText}`
     setActiveChat(newChat.id);
   };
 
+  // Recommend YouTube videos based on PDF content
+  const recommendYouTubeVideos = async () => {
+    if (!selectedPdf) {
+      alert('Please select a PDF first');
+      return;
+    }
+
+    if (!apiKey) {
+      alert('Please enter your OpenAI API key to get video recommendations');
+      return;
+    }
+
+    setLoadingVideos(true);
+    setUploadStatus('Finding relevant educational videos...');
+
+    try {
+      // Extract topics from PDF using AI
+      let pdfText = selectedPdf.text.substring(0, 2000);
+      
+      // If PDF text is too short or invalid, use filename
+      if (pdfText.length < 50) {
+        pdfText = `Educational content about ${selectedPdf.name}`;
+      }
+
+      console.log('Analyzing PDF for video recommendations...');
+      console.log('PDF text length:', pdfText.length);
+      
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey.trim()}`
+        },
+        body: JSON.stringify({
+          model: 'gpt-3.5-turbo',
+          messages: [{
+            role: 'system',
+            content: 'You are an educational content analyzer. Always respond with valid JSON only.'
+          }, {
+            role: 'user',
+            content: `Analyze this educational content and extract the main subject and 4 specific topics. Return ONLY valid JSON in this exact format:
+{"subject": "subject name", "topics": ["topic1", "topic2", "topic3", "topic4"]}
+
+Content: ${pdfText}
+
+Filename: ${selectedPdf.name}`
+          }],
+          temperature: 0.5,
+          max_tokens: 300
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`API error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      let content = data.choices[0].message.content.trim();
+      
+      console.log('API response:', content);
+      
+      // Clean JSON - handle multiple formats
+      content = content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      
+      // Find JSON object
+      const jsonStart = content.indexOf('{');
+      const jsonEnd = content.lastIndexOf('}');
+      if (jsonStart !== -1 && jsonEnd !== -1) {
+        content = content.substring(jsonStart, jsonEnd + 1);
+      }
+      
+      const topicsData = JSON.parse(content);
+      
+      console.log('Parsed topics:', topicsData);
+
+      // Validate data
+      if (!topicsData.subject || !topicsData.topics || !Array.isArray(topicsData.topics)) {
+        throw new Error('Invalid response format');
+      }
+
+      // Generate video recommendations
+      const videos = [];
+      
+      // Add a general subject video first
+      const subjectQuery = encodeURIComponent(`${topicsData.subject} complete tutorial`);
+      videos.push({
+        id: 'video-main',
+        title: `${topicsData.subject} - Complete Course`,
+        description: `Comprehensive ${topicsData.subject} course covering all fundamental concepts.`,
+        thumbnail: `https://img.youtube.com/vi/dQw4w9WgXcQ/mqdefault.jpg`,
+        searchUrl: `https://www.youtube.com/results?search_query=${subjectQuery}`,
+        topic: topicsData.subject,
+        channel: 'Educational Content'
+      });
+      
+      // Add topic-specific videos
+      topicsData.topics.forEach((topic, idx) => {
+        const searchQuery = `${topicsData.subject} ${topic} explained`;
+        const encodedQuery = encodeURIComponent(searchQuery);
+        
+        videos.push({
+          id: `video-${idx}`,
+          title: `${topic}`,
+          description: `Learn about ${topic} in ${topicsData.subject}. Clear explanations with examples and practice problems.`,
+          thumbnail: `https://img.youtube.com/vi/dQw4w9WgXcQ/mqdefault.jpg`,
+          searchUrl: `https://www.youtube.com/results?search_query=${encodedQuery}`,
+          topic: topic,
+          channel: 'Educational Videos'
+        });
+      });
+
+      console.log('Generated videos:', videos.length);
+      
+      setYoutubeVideos(videos);
+      setUploadStatus(`Found ${videos.length} video recommendations!`);
+      setTimeout(() => setUploadStatus(''), 3000);
+    } catch (error) {
+      console.error('Error getting video recommendations:', error);
+      setUploadStatus(`Error: ${error.message}`);
+      
+      // Provide fallback recommendations based on filename
+      const filename = selectedPdf.name.toLowerCase();
+      let subject = 'General Education';
+      
+      if (filename.includes('physic')) subject = 'Physics';
+      else if (filename.includes('math') || filename.includes('calculus') || filename.includes('algebra')) subject = 'Mathematics';
+      else if (filename.includes('chem')) subject = 'Chemistry';
+      else if (filename.includes('bio')) subject = 'Biology';
+      else if (filename.includes('history')) subject = 'History';
+      
+      const fallbackVideos = [
+        {
+          id: 'fallback-1',
+          title: `${subject} - Introduction`,
+          description: `Introduction to ${subject} concepts and fundamentals.`,
+          thumbnail: `https://img.youtube.com/vi/dQw4w9WgXcQ/mqdefault.jpg`,
+          searchUrl: `https://www.youtube.com/results?search_query=${encodeURIComponent(subject + ' tutorial')}`,
+          topic: subject,
+          channel: 'Educational Channels'
+        },
+        {
+          id: 'fallback-2',
+          title: `${subject} - Key Concepts`,
+          description: `Important concepts and theories in ${subject}.`,
+          thumbnail: `https://img.youtube.com/vi/dQw4w9WgXcQ/mqdefault.jpg`,
+          searchUrl: `https://www.youtube.com/results?search_query=${encodeURIComponent(subject + ' key concepts')}`,
+          topic: 'Core Concepts',
+          channel: 'Educational Channels'
+        },
+        {
+          id: 'fallback-3',
+          title: `${subject} - Problem Solving`,
+          description: `Practice problems and solutions in ${subject}.`,
+          thumbnail: `https://img.youtube.com/vi/dQw4w9WgXcQ/mqdefault.jpg`,
+          searchUrl: `https://www.youtube.com/results?search_query=${encodeURIComponent(subject + ' problems solved')}`,
+          topic: 'Practice',
+          channel: 'Educational Channels'
+        }
+      ];
+      
+      setYoutubeVideos(fallbackVideos);
+      setUploadStatus('Showing general recommendations (API error occurred)');
+    }
+
+    setLoadingVideos(false);
+  };
+
   const currentChat = chats.find(c => c.id === activeChat);
 
   return (
@@ -328,6 +497,13 @@ Content: ${pdfText}`
           >
             <BarChart3 className="w-5 h-5" />
             <span>Progress</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('videos')}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition ${activeTab === 'videos' ? 'bg-blue-50 text-blue-600' : 'hover:bg-gray-50'}`}
+          >
+            <Play className="w-5 h-5" />
+            <span>Videos</span>
           </button>
         </nav>
 
@@ -718,6 +894,169 @@ Content: ${pdfText}`
                   </div>
                 )}
               </div>
+            </div>
+          )}
+
+          {activeTab === 'videos' && (
+            <div className="max-w-4xl mx-auto">
+              <div className="bg-white rounded-xl shadow-sm p-6 mb-6">
+                <h2 className="text-2xl font-bold mb-4 flex items-center gap-2">
+                  <Play className="w-6 h-6 text-red-500" />
+                  YouTube Video Recommendations
+                </h2>
+                <p className="text-gray-600 mb-4">
+                  {selectedPdf 
+                    ? `Get educational video recommendations based on: ${selectedPdf.name}` 
+                    : 'Upload a PDF to get relevant video recommendations'}
+                </p>
+                <div className="flex gap-3">
+                  <button
+                    onClick={recommendYouTubeVideos}
+                    disabled={!selectedPdf || loadingVideos || !apiKey}
+                    className="px-6 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:bg-gray-300 disabled:cursor-not-allowed flex items-center gap-2"
+                  >
+                    {loadingVideos ? (
+                      <>
+                        <Loader className="w-5 h-5 animate-spin" />
+                        Finding Videos...
+                      </>
+                    ) : (
+                      <>
+                        <Play className="w-5 h-5" />
+                        Get AI Recommendations
+                      </>
+                    )}
+                  </button>
+                  <button
+                    onClick={() => {
+                      // Show sample video recommendations
+                      const sampleVideos = [
+                        {
+                          id: 'sample-1',
+                          title: 'Physics - Complete Introduction',
+                          description: 'Comprehensive physics course covering mechanics, motion, forces, energy, and more. Perfect for Class 11 students.',
+                          thumbnail: 'https://img.youtube.com/vi/dQw4w9WgXcQ/mqdefault.jpg',
+                          searchUrl: 'https://www.youtube.com/results?search_query=physics+class+11+complete+course',
+                          topic: 'Physics',
+                          channel: 'Khan Academy'
+                        },
+                        {
+                          id: 'sample-2',
+                          title: 'Newton\'s Laws of Motion Explained',
+                          description: 'Deep dive into Newton\'s three laws of motion with real-world examples and problem-solving techniques.',
+                          thumbnail: 'https://img.youtube.com/vi/dQw4w9WgXcQ/mqdefault.jpg',
+                          searchUrl: 'https://www.youtube.com/results?search_query=newtons+laws+of+motion+explained',
+                          topic: 'Mechanics',
+                          channel: 'CrashCourse Physics'
+                        },
+                        {
+                          id: 'sample-3',
+                          title: 'Kinematics - Motion in a Straight Line',
+                          description: 'Learn about displacement, velocity, acceleration, and equations of motion with solved examples.',
+                          thumbnail: 'https://img.youtube.com/vi/dQw4w9WgXcQ/mqdefault.jpg',
+                          searchUrl: 'https://www.youtube.com/results?search_query=kinematics+motion+straight+line',
+                          topic: 'Kinematics',
+                          channel: 'Physics Wallah'
+                        },
+                        {
+                          id: 'sample-4',
+                          title: 'Work, Energy and Power',
+                          description: 'Understanding the relationship between work, energy, and power with practical applications.',
+                          thumbnail: 'https://img.youtube.com/vi/dQw4w9WgXcQ/mqdefault.jpg',
+                          searchUrl: 'https://www.youtube.com/results?search_query=work+energy+power+physics',
+                          topic: 'Energy',
+                          channel: 'Vedantu'
+                        },
+                        {
+                          id: 'sample-5',
+                          title: 'Gravitation and Gravitational Force',
+                          description: 'Explore universal gravitation, gravitational potential energy, and satellite motion.',
+                          thumbnail: 'https://img.youtube.com/vi/dQw4w9WgXcQ/mqdefault.jpg',
+                          searchUrl: 'https://www.youtube.com/results?search_query=gravitation+physics+tutorial',
+                          topic: 'Gravitation',
+                          channel: 'Unacademy'
+                        }
+                      ];
+                      setYoutubeVideos(sampleVideos);
+                      setUploadStatus('Sample video recommendations loaded!');
+                      setTimeout(() => setUploadStatus(''), 3000);
+                    }}
+                    className="px-6 py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
+                  >
+                    Try Sample Videos
+                  </button>
+                </div>
+                {!apiKey && (
+                  <p className="text-sm text-orange-600 mt-3">
+                    ⚠️ Enter your OpenAI API key for personalized recommendations, or try sample videos
+                  </p>
+                )}
+              </div>
+
+              {youtubeVideos.length > 0 && (
+                <div className="space-y-4">
+                  <h3 className="text-lg font-semibold text-gray-700 mb-4">
+                    Recommended Videos ({youtubeVideos.length})
+                  </h3>
+                  {youtubeVideos.map((video) => (
+                    <div key={video.id} className="bg-white rounded-xl shadow-sm p-4 hover:shadow-md transition">
+                      <div className="flex gap-4">
+                        <div className="flex-shrink-0">
+                          <div className="w-40 h-24 bg-gray-200 rounded-lg flex items-center justify-center relative overflow-hidden">
+                            <img 
+                              src={video.thumbnail} 
+                              alt={video.title}
+                              className="w-full h-full object-cover"
+                              onError={(e) => {
+                                e.target.style.display = 'none';
+                                e.target.parentElement.innerHTML = '<div class="flex items-center justify-center w-full h-full bg-gradient-to-br from-red-500 to-red-600"><svg class="w-12 h-12 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M19.615 3.184c-3.604-.246-11.631-.245-15.23 0-3.897.266-4.356 2.62-4.385 8.816.029 6.185.484 8.549 4.385 8.816 3.6.245 11.626.246 15.23 0 3.897-.266 4.356-2.62 4.385-8.816-.029-6.185-.484-8.549-4.385-8.816zm-10.615 12.816v-8l8 3.993-8 4.007z"/></svg></div>';
+                              }}
+                            />
+                            <div className="absolute inset-0 flex items-center justify-center">
+                              <div className="w-12 h-12 bg-red-600 rounded-full flex items-center justify-center opacity-90">
+                                <Play className="w-6 h-6 text-white ml-1" fill="white" />
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex-1">
+                          <h4 className="font-semibold text-gray-900 mb-2">{video.title}</h4>
+                          <p className="text-sm text-gray-600 mb-2">{video.description}</p>
+                          <div className="flex items-center gap-4 text-sm text-gray-500">
+                            <span className="flex items-center gap-1">
+                              <BookOpen className="w-4 h-4" />
+                              {video.topic}
+                            </span>
+                            <span>{video.channel}</span>
+                          </div>
+                          <a
+                            href={video.searchUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-2 mt-3 px-4 py-2 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700 transition"
+                          >
+                            <Play className="w-4 h-4" />
+                            Search on YouTube
+                          </a>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mt-6">
+                    <p className="text-sm text-blue-800">
+                      <strong>💡 Tip:</strong> These recommendations are based on the content of your PDF. Click "Search on YouTube" to find the best educational videos on each topic.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {youtubeVideos.length === 0 && !loadingVideos && (
+                <div className="bg-white rounded-xl shadow-sm p-12 text-center">
+                  <Play className="w-16 h-16 mx-auto mb-4 text-gray-300" />
+                  <p className="text-gray-500">Click the button above to get video recommendations</p>
+                </div>
+              )}
             </div>
           )}
 
